@@ -1,17 +1,18 @@
-"""Web app for mobile phone price-category prediction.
+"""Desktop application for mobile phone price-category prediction.
 
-Task TA-010 uses the trained Random Forest model to forecast the price
-category from a user-provided set of mobile phone specifications.
-The app rebuilds the same engineered features used during model training,
-then returns the predicted class label and confidence values.
+The app uses a trained Random Forest model to predict the price category for a
+mobile phone based on technical specifications. It rebuilds the same engineered
+features used during model training and displays the prediction result in a
+Tkinter window.
 """
 
 import json
+import pickle
 from pathlib import Path
 
 import pandas as pd
-from flask import Flask, jsonify, render_template_string, request
-import pickle
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -24,7 +25,44 @@ CLASS_LABELS = {
     2: "30,000 and above",
 }
 
-app = Flask(__name__)
+
+def format_choice_for_display(field_name, raw_value):
+    """Format a numeric model value as a realistic phone specification."""
+    numeric_value = float(raw_value)
+    value = str(raw_value)
+
+    if field_name == "RAM_GB":
+        return f"{value} GB"
+    if field_name == "Storage_GB":
+        if numeric_value >= 1024:
+            return f"{numeric_value / 1024:g} TB"
+        return f"{value} GB"
+    if field_name == "Battery_mAh":
+        return f"{numeric_value:,.0f} mAh"
+    if field_name == "Charging_W":
+        return f"{value} W"
+    if field_name == "Screen_Size_Inches":
+        return f"{value} in"
+    if field_name == "Resolution_Width":
+        resolution_labels = {
+            "1080": "Full HD (1080 px)",
+            "1440": "2K / QHD (1440 px)",
+            "2160": "4K UHD (2160 px)",
+        }
+        return resolution_labels.get(value, f"{value} px")
+    if field_name == "Resolution_Height":
+        return f"{value} px"
+    if field_name == "Refresh_Rate_Hz":
+        return f"{value} Hz"
+    if field_name in {"Rear_Camera_MP", "Front_Camera_MP"}:
+        return f"{value} MP"
+    if field_name == "Processor_Speed_GHz":
+        return f"{value} GHz"
+    if field_name == "Cores":
+        return f"{value} cores"
+    if field_name == "Android_Version":
+        return f"Android {value}"
+    return value
 
 
 def load_model():
@@ -60,6 +98,8 @@ def coerce_bool(value):
     text = str(value).strip().lower()
     if text in {"1", "true", "yes", "y", "on"}:
         return 1
+    if text in {"0", "false", "no", "n", "off"}:
+        return 0
     return 0
 
 
@@ -169,105 +209,309 @@ def predict_from_form(form_data):
     }
 
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    """Render a simple prediction form and handle submissions."""
-    if request.method == "POST":
-        result = predict_from_form(request.form)
-        return render_template_string(
-            """
-            <!doctype html>
-            <html>
-            <head>
-                <title>Mobile Price Prediction</title>
-                <style>
-                    body { font-family: Arial, sans-serif; margin: 30px; }
-                    .card { max-width: 720px; margin: auto; padding: 24px; border: 1px solid #ccc; border-radius: 12px; }
-                    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-                    label { display: block; margin-bottom: 8px; }
-                    input, select { width: 100%; padding: 8px; margin-bottom: 12px; box-sizing: border-box; }
-                    button { padding: 10px 18px; background: #1f6feb; color: white; border: none; border-radius: 8px; cursor: pointer; }
-                    .result { margin-top: 20px; padding: 16px; background: #f2f7ff; border-radius: 8px; }
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <h2>Mobile Price Category Prediction</h2>
-                    <div class="result">
-                        <p><strong>Prediction:</strong> {{ result['predicted_price_category'] }}</p>
-                        <p><strong>Class probabilities:</strong></p>
-                        <ul>
-                            {% for code, probability in result['probabilities'].items() %}
-                                <li>{{ code }} : {{ '%.2f' % (probability * 100) }}%</li>
-                            {% endfor %}
-                        </ul>
-                    </div>
-                    <p><a href="/">Back to form</a></p>
-                </div>
-            </body>
-            </html>
-            """,
-            result=result,
+class PredictionApp:
+    """Tkinter-based GUI with a form page and a dedicated result page."""
+
+    NUMERIC_FIELDS = [
+        ("RAM_GB", "RAM (GB)", ["2", "3", "4", "6", "8", "12", "16", "24", "32"]),
+        ("Storage_GB", "Storage (GB)", ["32", "64", "128", "256", "512", "1024"]),
+        ("Battery_mAh", "Battery (mAh)", ["2000", "2500", "3000", "3500", "4000", "4500", "5000", "5500", "6000", "6500", "7000", "8000", "10000"]),
+        ("Charging_W", "Charging (W)", ["10", "18", "25", "33", "45", "65", "80", "100", "120", "150", "200", "240", "320"]),
+        ("Screen_Size_Inches", "Screen Size (inches)", ["4.5", "5.0", "5.5", "6.1", "6.3", "6.5", "6.7", "6.8", "7.0", "7.6"]),
+        ("Resolution_Width", "Resolution Width", ["720", "750", "1080", "1170", "1220", "1260", "1440", "1600", "1768", "1920", "2160", "2400", "2560"]),
+        ("Resolution_Height", "Resolution Height", ["1280", "1334", "1440", "1560", "1600", "1792", "1920", "2160", "2340", "2400", "2412", "2520", "2640", "3120", "3840"]),
+        ("Refresh_Rate_Hz", "Refresh Rate (Hz)", ["60", "90", "120", "144", "165", "185", "240"]),
+        ("Rear_Camera_MP", "Rear Camera (MP)", ["2", "5", "8", "12", "16", "32", "48", "50", "64", "108", "200"]),
+        ("Front_Camera_MP", "Front Camera (MP)", ["2", "5", "8", "10", "12", "13", "16", "20", "32", "40", "50", "60"]),
+        ("Processor_Speed_GHz", "Processor Speed (GHz)", ["1.0", "1.5", "1.8", "2.0", "2.2", "2.4", "2.5", "2.8", "3.0", "3.2", "3.4", "3.6", "4.0", "4.47"]),
+        ("Cores", "Cores", ["4", "6", "7", "8", "10", "12"]),
+        ("Android_Version", "Android Version", ["8", "9", "10", "11", "12", "13", "14", "15", "16"]),
+    ]
+
+    BOOLEAN_FIELDS = [
+        ("Has_3G", "Has 3G"),
+        ("Has_4G", "Has 4G"),
+        ("Has_5G", "Has 5G"),
+        ("Has_VoLTE", "Has VoLTE"),
+        ("Has_WiFi", "Has WiFi"),
+        ("Has_NFC", "Has NFC"),
+        ("External_Memory_Supported", "External Memory Supported"),
+        ("FM_Radio", "FM Radio"),
+    ]
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Mobile Price Prediction System")
+        self.root.geometry("1000x680")
+        self.root.minsize(900, 600)
+        self.root.configure(bg="#f5f1ea")
+
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
+        style.configure(
+            "App.TCombobox",
+            fieldbackground="#ffffff",
+            background="#ffffff",
+            foreground="#172033",
+            bordercolor="#cbd5e1",
+            lightcolor="#cbd5e1",
+            darkcolor="#cbd5e1",
+            padding=5,
         )
 
-    return render_template_string(
-        """
-        <!doctype html>
-        <html>
-        <head>
-            <title>Mobile Price Prediction</title>
-            <style>
-                body { font-family: Arial, sans-serif; margin: 30px; }
-                .card { max-width: 900px; margin: auto; padding: 24px; border: 1px solid #ccc; border-radius: 12px; }
-                .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-                label { display: block; margin-bottom: 8px; }
-                input, select { width: 100%; padding: 8px; margin-bottom: 12px; box-sizing: border-box; }
-                button { padding: 10px 18px; background: #1f6feb; color: white; border: none; border-radius: 8px; cursor: pointer; }
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <h2>Predict Mobile Price Category</h2>
-                <form method="post">
-                    <div class="row">
-                        <div><label>RAM (GB)<input name="RAM_GB" type="number" step="0.1" value="8" required></label></div>
-                        <div><label>Storage (GB)<input name="Storage_GB" type="number" step="0.1" value="128" required></label></div>
-                        <div><label>Battery (mAh)<input name="Battery_mAh" type="number" step="1" value="4500" required></label></div>
-                        <div><label>Charging (W)<input name="Charging_W" type="number" step="0.1" value="45" required></label></div>
-                        <div><label>Screen Size (inches)<input name="Screen_Size_Inches" type="number" step="0.1" value="6.7" required></label></div>
-                        <div><label>Resolution Width<input name="Resolution_Width" type="number" step="1" value="1080" required></label></div>
-                        <div><label>Resolution Height<input name="Resolution_Height" type="number" step="1" value="2412" required></label></div>
-                        <div><label>Refresh Rate (Hz)<input name="Refresh_Rate_Hz" type="number" step="1" value="120" required></label></div>
-                        <div><label>Rear Camera (MP)<input name="Rear_Camera_MP" type="number" step="0.1" value="50" required></label></div>
-                        <div><label>Front Camera (MP)<input name="Front_Camera_MP" type="number" step="0.1" value="32" required></label></div>
-                        <div><label>Processor Speed (GHz)<input name="Processor_Speed_GHz" type="number" step="0.1" value="3.2" required></label></div>
-                        <div><label>Cores<input name="Cores" type="number" step="1" value="7" required></label></div>
-                        <div><label>Has 3G<select name="Has_3G"><option value="1" selected>Yes</option><option value="0">No</option></select></label></div>
-                        <div><label>Has 4G<select name="Has_4G"><option value="1" selected>Yes</option><option value="0">No</option></select></label></div>
-                        <div><label>Has 5G<select name="Has_5G"><option value="1" selected>Yes</option><option value="0">No</option></select></label></div>
-                        <div><label>Has VoLTE<select name="Has_VoLTE"><option value="1" selected>Yes</option><option value="0">No</option></select></label></div>
-                        <div><label>Has WiFi<select name="Has_WiFi"><option value="1" selected>Yes</option><option value="0">No</option></select></label></div>
-                        <div><label>Has NFC<select name="Has_NFC"><option value="0">No</option><option value="1" selected>Yes</option></select></label></div>
-                        <div><label>External Memory Supported<select name="External_Memory_Supported"><option value="0" selected>No</option><option value="1">Yes</option></select></label></div>
-                        <div><label>Android Version<input name="Android_Version" type="number" step="0.1" value="13" required></label></div>
-                        <div><label>FM Radio<select name="FM_Radio"><option value="1">Yes</option><option value="0" selected>No</option></select></label></div>
-                    </div>
-                    <button type="submit">Predict Price Category</button>
-                </form>
-            </div>
-        </body>
-        </html>
-        """
-    )
+        self.entries = {}
+        self.display_to_raw = {}
+        self.current_result = {}
+        self.container = tk.Frame(self.root, bg="#f5f1ea")
+        self.container.pack(fill="both", expand=True)
+        self.container.grid_rowconfigure(0, weight=1)
+        self.container.grid_columnconfigure(0, weight=1)
+        self.frames = {}
+        self.build_layout()
+        self.show_frame("form")
+
+    def build_layout(self):
+        """Create the form and result pages."""
+        self.create_form_page()
+        self.create_result_page()
+
+    def show_frame(self, frame_name):
+        """Display one frame and hide the others."""
+        for name, frame in self.frames.items():
+            frame.grid_forget()
+        self.frames[frame_name].grid(row=0, column=0, sticky="nsew")
+
+    def create_form_page(self):
+        """Build the input form page."""
+        frame = tk.Frame(self.container, bg="#f5f1ea", padx=22, pady=18)
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
+        self.frames["form"] = frame
+
+        header_bar = tk.Frame(frame, bg="#24323d", padx=18, pady=12)
+        header_bar.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        header_bar.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            header_bar,
+            text="MOBILE PRICE PREDICTION",
+            font=("Segoe UI", 18, "bold"),
+            fg="#ffffff",
+            bg="#24323d",
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        tk.Label(
+            header_bar,
+            text="Configure a device to generate its price category",
+            font=("Segoe UI", 9),
+            fg="#c7d2d9",
+            bg="#24323d",
+            anchor="e",
+        ).grid(row=0, column=1, sticky="e", padx=(20, 0))
+
+        body = tk.Frame(frame, bg="#f5f1ea")
+        body.grid(row=2, column=0, sticky="nsew")
+        body.grid_rowconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=1)
+
+        form_card = tk.Frame(body, bg="#fffdf9", padx=16, pady=14, highlightbackground="#d8d0c4", highlightthickness=1)
+        form_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        form_card.grid_columnconfigure(0, weight=1)
+        form_card.grid_rowconfigure(1, weight=1)
+
+        form_inner = tk.Frame(form_card, bg="#fffdf9")
+        form_inner.grid(row=1, column=0, sticky="nsew")
+        form_columns = 3
+        form_inner.grid_columnconfigure(0, weight=1)
+        form_inner.grid_columnconfigure(2, weight=1)
+        form_inner.grid_columnconfigure(4, weight=1)
+
+        tk.Label(
+            form_card,
+            text="DEVICE SPECIFICATIONS",
+            bg="#fffdf9",
+            fg="#0f766e",
+            font=("Segoe UI", 10, "bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        for index, (field_name, label_text, choices) in enumerate(self.NUMERIC_FIELDS):
+            row = 1 + (index // form_columns) * 2
+            col = (index % form_columns) * 2
+
+            label = tk.Label(form_inner, text=label_text, bg="#fffdf9", fg="#344054", font=("Segoe UI", 9, "bold"))
+            label.grid(row=row, column=col, sticky="w", padx=(0, 12), pady=(3, 2))
+
+            display_choices = [format_choice_for_display(field_name, choice) for choice in choices]
+            self.display_to_raw[field_name] = dict(zip(display_choices, choices))
+            value_var = tk.StringVar(value=display_choices[0])
+            combo = ttk.Combobox(
+                form_inner,
+                textvariable=value_var,
+                values=display_choices,
+                state="readonly",
+                width=18,
+                justify="left",
+                style="App.TCombobox",
+            )
+            combo.grid(row=row + 1, column=col, sticky="ew", padx=(0, 12), pady=(0, 5))
+            self.entries[field_name] = value_var
+
+        options_card = tk.Frame(body, bg="#f0f8f5", padx=16, pady=14, highlightbackground="#c9ddd7", highlightthickness=1)
+        options_card.grid(row=0, column=1, sticky="nsew")
+        options_card.grid_columnconfigure(0, weight=1)
+
+        tk.Label(options_card, text="FEATURES", bg="#f0f8f5", fg="#0f766e", font=("Segoe UI", 10, "bold"), anchor="w").grid(row=0, column=0, sticky="w")
+        tk.Label(options_card, text="Select supported features", bg="#f0f8f5", fg="#667085", font=("Segoe UI", 9), anchor="w").grid(row=1, column=0, sticky="w", pady=(2, 12))
+
+        for index, (field_name, label_text) in enumerate(self.BOOLEAN_FIELDS):
+            value_var = tk.BooleanVar(value=False)
+            check = tk.Checkbutton(
+                options_card,
+                text=label_text,
+                variable=value_var,
+                bg="#f0f8f5",
+                fg="#344054",
+                activebackground="#f0f8f5",
+                activeforeground="#0f766e",
+                selectcolor="#dbeafe",
+                font=("Segoe UI", 9),
+                padx=0,
+                pady=5,
+                anchor="w",
+            )
+            check.grid(row=index + 2, column=0, sticky="w")
+            self.entries[field_name] = value_var
+
+        predict_button = tk.Button(
+            options_card,
+            text="CALCULATE PRICE",
+            command=self.predict,
+            bg="#e76f51",
+            fg="white",
+            font=("Segoe UI", 10, "bold"),
+            padx=12,
+            pady=10,
+            bd=0,
+            highlightthickness=0,
+            width=18,
+            relief="flat",
+            activebackground="#c9573d",
+            activeforeground="white",
+        )
+        predict_button.grid(row=len(self.BOOLEAN_FIELDS) + 2, column=0, sticky="ew", pady=(18, 0))
+
+    def create_result_page(self):
+        """Build the dedicated prediction result page."""
+        frame = tk.Frame(self.container, bg="#f5f1ea", padx=22, pady=18)
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(1, weight=1)
+        self.frames["result"] = frame
+
+        title = tk.Label(
+            frame,
+            text="Billing Summary",
+            font=("Segoe UI", 20, "bold"),
+            fg="#24323d",
+            bg="#f5f1ea",
+            anchor="w",
+        )
+        title.grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        result_box = tk.Frame(frame, bg="#24323d", padx=20, pady=18, highlightbackground="#455765", highlightthickness=1)
+        result_box.grid(row=1, column=0, sticky="nsew")
+        result_box.grid_columnconfigure(0, weight=1)
+        result_box.grid_rowconfigure(0, weight=1)
+
+        self.result_text = tk.Text(
+            result_box,
+            bg="#24323d",
+            fg="#e2e8f0",
+            height=16,
+            width=90,
+            wrap="word",
+            font=("Segoe UI", 10),
+        )
+        self.result_text.configure(state="disabled")
+        self.result_text.grid(row=0, column=0, sticky="nsew")
+
+        self.result_label = tk.Label(
+            result_box,
+            text="",
+            bg="#24323d",
+            fg="#f8fafc",
+            font=("Segoe UI", 20, "bold"),
+            anchor="w",
+            justify="left",
+        )
+        self.result_label.grid(row=1, column=0, sticky="w", pady=(18, 0))
+
+        back_button = tk.Button(
+            frame,
+            text="Back",
+            command=lambda: self.show_frame("form"),
+            bg="#d8ebe5",
+            fg="#24323d",
+            font=("Segoe UI", 10, "bold"),
+            padx=20,
+            pady=8,
+            bd=0,
+            highlightthickness=0,
+            relief="flat",
+        )
+        back_button.grid(row=2, column=0, sticky="w", pady=(12, 0))
+
+    def collect_input(self):
+        """Collect the form values into a dictionary for the model."""
+        payload = {}
+        for field_name, value_var in self.entries.items():
+            if isinstance(value_var, tk.StringVar):
+                payload[field_name] = self.display_to_raw[field_name].get(
+                    value_var.get(), value_var.get()
+                )
+            elif isinstance(value_var, tk.BooleanVar):
+                payload[field_name] = bool(value_var.get())
+        return payload
+
+    def predict(self):
+        """Run the model and update the dedicated result page."""
+        payload = self.collect_input()
+        try:
+            result = predict_from_form(payload)
+        except Exception as exc:  # pragma: no cover - user-facing error handling
+            messagebox.showerror("Prediction Error", f"Unable to predict price category: {exc}")
+            return
+
+        self.current_result = result
+        selected_lines = ["Selected Configurations", "=" * 24]
+        for field_name, value_var in self.entries.items():
+            value = value_var.get()
+            if isinstance(value_var, tk.BooleanVar):
+                if value:
+                    selected_lines.append(f"{dict(self.BOOLEAN_FIELDS)[field_name]}: Yes")
+            else:
+                label = next(label for name, label, _ in self.NUMERIC_FIELDS if name == field_name)
+                selected_lines.append(f"{label}: {value}")
+
+        self.result_label.config(
+            text=f"Predicted Price: {result['predicted_price_category']}"
+        )
+        self.result_text.configure(state="normal")
+        self.result_text.delete("1.0", tk.END)
+        self.result_text.insert(tk.END, "\n".join(selected_lines))
+        self.result_text.configure(state="disabled")
+        self.show_frame("result")
 
 
-@app.route("/api/predict", methods=["POST"])
-def api_predict():
-    """Return the prediction as JSON for API usage."""
-    payload = request.get_json(silent=True) or request.form.to_dict(flat=True)
-    result = predict_from_form(payload)
-    return jsonify(result)
+def main():
+    """Run the Tkinter application."""
+    root = tk.Tk()
+    app = PredictionApp(root)
+    root.mainloop()
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    main()
