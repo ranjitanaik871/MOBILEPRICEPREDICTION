@@ -1,0 +1,49 @@
+{
+  "task": "TA-009 Random Forest Classification",
+  "target_column": "Price_Category_Encoded",
+  "class_names": {
+    "0": "Below 15,000",
+    "1": "15,000-29,999",
+    "2": "30,000 and above"
+  },
+  "feature_names": [
+    "numeric__RAM_GB",
+    "numeric__Storage_GB",
+    "numeric__Battery_mAh",
+    "numeric__Charging_W",
+    "numeric__Screen_Size_Inches",
+    "numeric__Resolution_Width",
+    "numeric__Resolution_Height",
+    "numeric__Refresh_Rate_Hz",
+    "numeric__Rear_Camera_MP",
+    "numeric__Front_Camera_MP",
+    "numeric__Processor_Speed_GHz",
+    "numeric__Cores",
+    "numeric__Has_3G",
+    "numeric__Has_4G",
+    "numeric__Has_5G",
+    "numeric__Has_VoLTE",
+    "numeric__Has_WiFi",
+    "numeric__Has_NFC",
+    "numeric__External_Memory_Supported",
+    "numeric__Android_Version",
+    "numeric__FM_Radio",
+    "numeric__Resolution_Megapixels",
+    "numeric__Total_Camera_MP",
+    "numeric__Battery_per_Screen_Inch",
+    "numeric__Storage_per_RAM_GB",
+    "numeric__Resolution_Aspect_Ratio"
+  ],
+  "training_rows": 813,
+  "feature_count": 26,
+  "class_distribution": {
+    "0": 230,
+    "1": 294,
+    "2": 289
+  },
+  "model_parameters": {
+    "n_estimators": 300,
+    "random_state": 42,
+    "n_jobs": -1
+  }
+}
